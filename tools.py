@@ -1,31 +1,59 @@
-import logging
-from google.adk.tools.tool_context import ToolContext
-from google.adk.tools.langchain_tool import LangchainTool
-from langchain_community.tools import WikipediaQueryRun
-from langchain_community.utilities import WikipediaAPIWrapper
-from toolbox_core import ToolboxSyncClient
-from langchain_community.tools.arxiv.tool import ArxivQueryRun
-from langchain_community.utilities.arxiv import ArxivAPIWrapper
+import os
+import dotenv
 
-# 1. State Memory Tool
-def add_prompt_to_state(tool_context: ToolContext, prompt: str) -> dict[str, str]:
-    """Saves the user's initial prompt to the state."""
-    tool_context.state["PROMPT"] = prompt
-    logging.info(f"[State updated] Added to PROMPT: {prompt}")
-    return {"status": "success"}
+from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams 
+import json
+from google import genai
+from google.genai import types
 
-# 2. Wikipedia Fallback Tool
-wikipedia_tool = LangchainTool(
-    tool=WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
-)
 
-# 3. Below your Wikipedia tool, add the arXiv tool
-arxiv_tool = LangchainTool(
-    tool=ArxivQueryRun(api_wrapper=ArxivAPIWrapper())
-)
+def get_maps_mcp_toolset():
+    dotenv.load_dotenv()
+    maps_api_key = os.getenv('MAPS_API_KEY', 'no_api_found')
+    maps_mcp_url = os.getenv('MAPS_MCP_URL')
+    
+    tools = MCPToolset(
+        connection_params=StreamableHTTPConnectionParams(
+            url=maps_mcp_url,
+            headers={
+                "X-Goog-Api-Key": maps_api_key
+            }
+        )
+    )
+    print("Maps MCP Toolset configured.")
+    return tools
 
-# MCP Toolbox for Databases (MySQL)
-# Connects to the local MCP Toolbox server running on port 5000
-toolbox = ToolboxSyncClient("http://127.0.0.1:5000")
-db_tools = toolbox.load_toolset('research_db_toolset')
+def analyze_medicine_image(image_path: str) -> str:
+    """
+    Use this tool to read an image of a medicine bottle or prescription.
+    Pass the file path of the image to extract the medicine details.
+    """
+    client = genai.Client() # Assumes your environment credentials are set
+    
+    # Read the image file into bytes
+    with open(image_path, "rb") as f:
+        image_bytes = f.read()
 
+    # Define a strict prompt to extract structured JSON data
+    prompt = """
+    You are a highly accurate medical assistant for the SKIn-Net app.
+    Analyze this medicine bottle or prescription and return ONLY a JSON object:
+    {
+      "medicine_name": "Exact name of the medicine",
+      "dosage_instructions": "How and when to take it",
+      "pills_count": "Estimated quantity or NA"
+    }
+    """
+    
+    # Call the model (using your working 2.5-flash model)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"), 
+            prompt
+        ],
+        config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
+    
+    return response.text

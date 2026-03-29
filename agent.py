@@ -1,48 +1,96 @@
 import os
-import random
-import string
-import time
 from dotenv import load_dotenv
+import logging
+from google.adk.tools.tool_context import ToolContext
+import google.auth
 from google.adk.agents import Agent
-from .tools import wikipedia_tool, arxiv_tool, add_prompt_to_state, db_tools
+from toolbox_core import ToolboxSyncClient
+from google.adk.agents import SequentialAgent
+from . import tools
+from .tools import analyze_medicine_image
 
+# Load environment variables
 load_dotenv()
 model_name = os.getenv("MODEL", "gemini-2.5-flash")
 
-# A quick python tool to generate the unique ID for the database
-def generate_unique_id(tool_context) -> dict:
-    """Generates a random 6-character alphanumeric ID for the research session."""
-    unique_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    # Force the agent to wait for 15 seconds to avoid hitting the Gemini Free Tier RPM limit
-    time.sleep(15) 
-    return {"research_id": unique_id}
+# Load the Maps Toolset
+maps_toolset = tools.get_maps_mcp_toolset()
 
-root_agent = Agent(
-    name="academic_researcher",
+# 1. Connect to your local MCP Toolbox server
+toolbox = ToolboxSyncClient("http://127.0.0.1:5000")
+
+# 2. Load the MySQL toolset you defined in your tools.yaml
+# (Ensure the toolset name matches exactly what is in your tools.yaml)
+db_tools = toolbox.load_toolset('kin_db_toolset')
+
+# Greet user and save their prompt
+def add_prompt_to_state(
+    tool_context: ToolContext, prompt: str
+) -> dict[str, str]:
+    """Saves the user's initial prompt to the state."""
+    tool_context.state["PROMPT"] = prompt
+    logging.info(f"[State updated] Added to PROMPT: {prompt}")
+    return {"status": "success"}
+
+# 3. Create the SKIn-Net Agent
+#  Health Analyzer Agent (Handles Vision & Database)
+health_analyzer = Agent(
+    name="health_analyzer",
     model=model_name,
-    description="An autonomous agent that conducts academic research, saves sources, and retrieves past sessions.",
+    description="Analyzes medical images and checks user inventory.",
     instruction="""
-    You are an autonomous AI academic researcher. 
+    You are the medical data specialist for SKIn-Net.
+    First, use the vision tool to read any provided prescription or medicine images.
+    Second, use the database tool to check the user's current medicine inventory.
+    Output a combined summary of what the user needs and what they currently have.
     
-    When you first greet the user, introduce yourself and explain that they have two options:
-    A) Start a NEW research session (please provide your Name, Email, and Topic).
-    B) Access PAST research (please provide your existing Research ID and Email).
-    
-    PATH A - NEW RESEARCH WORKFLOW:
-    1. Once you have their Name, Email, and Topic, politely tell the user to "grab a coffee" while you conduct the research, as it may take a moment.
-    2. Use the 'generate_unique_id' tool to create a new research ID.
-    3. Use the 'start_research_session' tool to save the user's data. For the access_link parameter, use the exact format: "https://dummyurl.com/research/[research_id]".
-    4. Use the 'arxiv' tool to search for real academic papers. To conserve resources and avoid timeouts, do ONE comprehensive search and extract 3 to 5 highly relevant papers from that single search result.
-    5. Use the 'save_academic_source' tool to persist the title, summary, and URL for EACH of those 3-5 papers to the database.
-    6. Draft the final APA-style paper. The output MUST contain:
-       - The generated dummyurl.com access link for future reference.
-       - The Research ID.
-       - Table of Contents, the drafted paper, APA citations, and a Bibliography.
-       
-    PATH B - RETRIEVE PAST RESEARCH WORKFLOW:
-    1. If the user wants to access past research, ensure you have their Research ID and Email.
-    2. Use the 'retrieve_research_session' tool to fetch their data from the database.
-    3. Present the retrieved research to the user clearly, listing the topic, the dummyurl.com access link, and all the saved sources and summaries you retrieved.
+    PROMPT:
+    { PROMPT }
     """,
-    tools=[arxiv_tool, wikipedia_tool, add_prompt_to_state, generate_unique_id] + db_tools
+    tools=db_tools + [analyze_medicine_image],
+    output_key="health_data" 
 )
+
+#  Logistics Coordinator Agent (Handles Maps)
+logistics_coordinator = Agent(
+    name="logistics_coordinator",
+    model=model_name,
+    description="Finds pharmacies and travel routes.",
+    instruction="""
+    You are the logistics coordinator for SKIn-Net.
+    Review the HEALTH_DATA. If the user is low on any medicine, use your Maps tool 
+    to find the nearest pharmacy and calculate the driving route.
+    Format a warm, conversational final response for the user, combining both 
+    their health inventory status and the travel logistics.
+    
+    HEALTH_DATA:
+    {health_data}
+    """,
+    tools=[maps_toolset]
+)
+
+#  Define the Workflow
+skin_net_workflow = SequentialAgent(
+    name="skin_net_workflow",
+    description="Workflow to analyze health data and plan logistics.",
+    sub_agents=[
+        health_analyzer,      # Step 1: Read image and check DB
+        logistics_coordinator # Step 2: Check Maps and format response
+    ]
+)
+
+#  The Main Greeter Agent
+root_agent = Agent(
+    name="skin_net_greeter",
+    model=model_name,
+    description="Main entry point for SKIn-Net.",
+    instruction="""
+    You are a warm, conversational family member assisting with elderly care.
+    When the user asks for help, use the 'add_prompt_to_state' tool to save their request.
+    After using the tool, transfer control to the 'skin_net_workflow' agent.
+    """,
+    tools=[add_prompt_to_state],
+    sub_agents=[skin_net_workflow]
+)
+# Can you check if I have enough Vitamin E capsules left, and if not, find the closest pharmacy to my location and tell me how long it takes to drive there? I need 50 pills in stock. My id is test12, located at Nehru Colony, Dehradun.
+# I just uploaded a picture of my new medicine at 1.jpg. Can you tell me what the dosage is and see if the nearest pharmacy has it? My id is test12, located at Nehru Colony, Dehradun.
