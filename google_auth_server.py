@@ -6,7 +6,7 @@ from googleapiclient.discovery import build
 
 # BYPASS HTTPS REQUIREMENT FOR LOCAL OAUTH TESTING
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 app = Flask(__name__)
 
 # 1. ADD THIS LINE: Flask requires a secret key to use 'session' memory
@@ -83,7 +83,7 @@ def callback():
         return f"Authentication succeeded, but database update failed: {e}"
         
     # 7. Redirect the user back to your Telegram Bot smoothly
-    return redirect("https://t.me/your_bot_username_here")
+    return redirect("https://t.me/skin_net_bot?start=welcome")
 
 if __name__ == "__main__":
     app.run(port=5050)
