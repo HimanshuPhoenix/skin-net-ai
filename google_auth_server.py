@@ -83,7 +83,7 @@ def callback():
         return f"Authentication succeeded, but database update failed: {e}"
         
     # 7. Redirect the user back to your Telegram Bot smoothly
-    return redirect("https://t.me/skin_net_bot?start=welcome")
+    return redirect("https://t.me/skin_net_bot")
 
 if __name__ == "__main__":
     app.run(port=5050)
