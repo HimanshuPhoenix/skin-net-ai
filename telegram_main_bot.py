@@ -63,7 +63,7 @@ def poll_main_bot():
             if update_id: 
                 url += f"&offset={update_id}"
                 
-            response = requests.get(url, timeout=20).json()
+            response = requests.get(url, timeout=200).json()
             
             for result in response.get("result", []):
                 update_id = result["update_id"] + 1
@@ -76,9 +76,11 @@ def poll_main_bot():
                 text_content = message.get("text", "")
                 caption = message.get("caption", "")
                 prompt_text = text_content or caption
-                photos = message.get("photo", [])
                 
-                if not prompt_text.strip() and not photos: 
+                photos = message.get("photo", [])
+                document = message.get("document")
+                
+                if not prompt_text.strip() and not photos and not document: 
                     continue
 
                 print(f"Processing Request for {chat_id}...")
@@ -86,20 +88,26 @@ def poll_main_bot():
                 uid = f"kin_{chat_id}"
                 contextual_prompt = f"[SYSTEM CONTEXT: The user's Telegram Chat ID is {chat_id} and their assigned User ID is {uid}.] \n\nUser says: {prompt_text}"
                 
-                parts = [{"text": contextual_prompt}]
-                
-                # 2. HANDLE IMAGES (Passing the local path to the Agent via text)
+                # FIX 3: Handle both Images and Documents
+                local_path = None
                 if photos:
                     file_id = photos[-1]["file_id"]  # -1 grabs the highest resolution version
                     file_name = f"{file_id}.jpg"
                     local_path = download_telegram_file(file_id, file_name)
+                elif document:
+                    file_id = document["file_id"]
+                    file_name = document.get("file_name", f"{file_id}.pdf")
+                    local_path = download_telegram_file(file_id, file_name)
                     
-                    if local_path:
-                        # Tell the agent explicitly where the downloaded image is saved
-                        contextual_prompt += f"\n\n[ATTACHED IMAGE PATH: {local_path}]"
+                if local_path:
+                    # FIX 4: Sanitize Windows paths to prevent JSON escape character corruption
+                    safe_path = local_path.replace("\\", "/")
+                    contextual_prompt += f"\n\n[ATTACHED FILE PATH: {safe_path}]"
 
                 session_url = f"{BASE_URL}/apps/{APP_NAME}/users/{uid}/sessions/{chat_id}"
-                adk_headers = {"Connection": "close"}
+                
+                # FIX 5: Remove "Connection: close" to allow SSE streaming to stay alive
+                adk_headers = {"Accept": "text/event-stream"}
                 
                 try:
                     check_session = requests.get(session_url, headers=adk_headers, timeout=10)

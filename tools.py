@@ -47,6 +47,7 @@ def get_maps_mcp_toolset():
 def analyze_medical_document(file_path: str) -> str:
     """Reads images or PDFs of prescriptions and lab tests, extracting the patient's name and report parameters."""
     client = genai.Client()
+    file_path = file_path.strip('\"\'')
     # Dynamically guess the MIME type based on the file extension
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type is None:
@@ -134,8 +135,8 @@ def identify_unknown_medicine(file_path: str) -> str:
     Identifies the medicine and returns its general uses alongside a medical disclaimer.
     """
     client = genai.Client()
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
+    file_path = file_path.strip('\"\'')
+
     # Dynamically guess the MIME type based on the file extension
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type is None:
