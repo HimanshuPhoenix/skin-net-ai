@@ -1,2 +1,6 @@
 .env
 toolbox.exe
+tools.yaml.txt
+tools.py.txt
+agent.py.txt
+db_structure.sql.txt

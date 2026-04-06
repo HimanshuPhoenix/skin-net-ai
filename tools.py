@@ -1,14 +1,37 @@
 import os
-import dotenv
-
-from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams 
 import json
+import logging
+import urllib.parse
+import requests
+import mimetypes
+import dotenv
 from google import genai
 from google.genai import types
+from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
+import urllib.parse
 
+def send_telegram_alert(message: str, chat_id: str) -> str:
+    """Sends an urgent health or logistics alert to a family member via Telegram."""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        return "Error: Telegram Bot Token not configured."
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message}
+    
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            logging.info(f"Telegram alert sent to {chat_id}")
+            return "Alert sent successfully."
+        else:
+            return f"Failed to send alert. Status: {response.status_code}"
+    except Exception as e:
+        return f"Error sending message: {str(e)}"
 
 def get_maps_mcp_toolset():
+    """Configures the MCP Toolset for Google Maps."""
     dotenv.load_dotenv()
     maps_api_key = os.getenv('MAPS_API_KEY', 'no_api_found')
     maps_mcp_url = os.getenv('MAPS_MCP_URL')
@@ -16,44 +39,140 @@ def get_maps_mcp_toolset():
     tools = MCPToolset(
         connection_params=StreamableHTTPConnectionParams(
             url=maps_mcp_url,
-            headers={
-                "X-Goog-Api-Key": maps_api_key
-            }
+            headers={"X-Goog-Api-Key": maps_api_key}
         )
     )
-    print("Maps MCP Toolset configured.")
     return tools
 
-def analyze_medicine_image(image_path: str) -> str:
-    """
-    Use this tool to read an image of a medicine bottle or prescription.
-    Pass the file path of the image to extract the medicine details.
-    """
-    client = genai.Client() # Assumes your environment credentials are set
-    
-    # Read the image file into bytes
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
+def analyze_medical_document(file_path: str) -> str:
+    """Reads images or PDFs of prescriptions and lab tests, extracting the patient's name and report parameters."""
+    client = genai.Client()
+    # Dynamically guess the MIME type based on the file extension
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type is None:
+        mime_type = "application/pdf" if file_path.lower().endswith('.pdf') else "image/jpeg"
 
-    # Define a strict prompt to extract structured JSON data
+    try:
+        # 1. Google Cloud Storage
+        if file_path.startswith("gs://"):
+            document_part = types.Part.from_uri(file_uri=file_path, mime_type=mime_type)
+            
+        # 2. Web URLs & ADK Chat Attachments
+        elif file_path.startswith("http://") or file_path.startswith("https://"):
+            response = requests.get(file_path, timeout=15)
+            response.raise_for_status()
+            document_part = types.Part.from_bytes(data=response.content, mime_type=mime_type)
+            
+        # 3. Local Files
+        else:
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            document_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+            
+    except Exception as e:
+        return f"Error loading document: {str(e)}"
+
     prompt = """
-    You are a highly accurate medical assistant for the SKIn-Net app.
-    Analyze this medicine bottle or prescription and return ONLY a JSON object:
+    You are a highly accurate medical assistant for SKIn-Net.
+    Analyze this medical document and return ONLY a JSON object:
     {
-      "medicine_name": "Exact name of the medicine",
-      "dosage_instructions": "How and when to take it",
-      "pills_count": "Estimated quantity or NA"
+      "patient_name": "Exact name of the patient on the document",
+      "doctor_name": "Name of the doctor",
+      "report_date": "YYYY-MM-DD",
+      "parameters": [
+        {"parameter_name": "name", "current_value": "value", "normal_range": "range"}
+      ],
+      "medicines": [
+        {"medicine_name": "name", "dosage": "dosage"}
+      ]
     }
     """
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[document_part, prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        return response.text
+    except Exception as e:
+        return f"TOOL_ERROR: AI Analysis failed. Details: {str(e)}"
+
+def generate_uber_booking_link(destination_address: str) -> str:
+    """
+    Generates a real, clickable Uber Universal Link.
+    When the user clicks this, it securely opens the Uber app on their device
+    with the destination pre-filled, showing live fares and allowing them to book natively.
+    """
+    # URL encode the address so it safely parses in the browser
+    encoded_destination = urllib.parse.quote(destination_address)
     
-    # Call the model (using your working 2.5-flash model)
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[
-            types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"), 
-            prompt
-        ],
-        config=types.GenerateContentConfig(response_mime_type="application/json")
-    )
-    
-    return response.text
+    # External Reference: Standard Uber Universal Link structure
+    return f"https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]={encoded_destination}"
+
+
+def schedule_calendar_event(date_time: str, description: str) -> str:
+    """Prototype tool to schedule an event on the user's calendar."""
+    logging.info(f"Scheduling calendar event: {description} at {date_time}")
+    return f"Successfully scheduled '{description}' for {date_time} in the calendar."
+
+def generate_whatsapp_link(phone_number: str, message: str) -> str:
+    """
+    Generates a clickable WhatsApp link to send a prescription or order to a pharmacist.
+    The frontend will display this link for the user to click and hit "Send".
+    """
+    encoded_message = urllib.parse.quote(message)
+    clean_number = ''.join(filter(str.isdigit, phone_number))
+    return f"https://wa.me/{clean_number}?text={encoded_message}"
+
+def generate_phone_call_link(phone_number: str) -> str:
+    """Generates a clickable tel: link to allow the user to call a saved contact."""
+    return f"tel:{phone_number}"
+
+def identify_unknown_medicine(file_path: str) -> str:
+    """
+    Use this tool when a user clicks a photo of a loose pill or unknown medicine.
+    Identifies the medicine and returns its general uses alongside a medical disclaimer.
+    """
+    client = genai.Client()
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+    # Dynamically guess the MIME type based on the file extension
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type is None:
+        mime_type = "image/jpeg"
+        
+    try:
+        # 1. Google Cloud Storage (Natively supported by Vertex AI)
+        if file_path.startswith("gs://"):
+            image_part = types.Part.from_uri(file_uri=file_path, mime_type=mime_type)
+            
+        # 2. Web URLs & ADK Chat Attachments (Must be downloaded into memory first)
+        elif file_path.startswith("http://") or file_path.startswith("https://"):
+            response = requests.get(file_path, timeout=15)
+            response.raise_for_status() # Ensure the download was successful
+            image_part = types.Part.from_bytes(data=response.content, mime_type=mime_type)
+            
+        # 3. Local Files on your Hard Drive
+        else:
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            image_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
+            
+    except Exception as e:
+        return f"Error loading image: {str(e)}"
+        
+    prompt = """
+    You are a highly accurate medical assistant for SKIn-Net.
+    Identify this medicine or pill. If expiry date is available, also educate the user about it. If the medicine is already expire, alert the user. Provide its general medical uses, common name, 
+    and an EXPLICIT medical disclaimer stating that this is an AI estimation and the user 
+    MUST consult their doctor. Return as a clean JSON object.
+    """
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[image_part, prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+        return response.text
+    except Exception as e:
+        return f"TOOL_ERROR: AI Analysis failed. Details: {str(e)}"

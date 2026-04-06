@@ -8,29 +8,187 @@ sources:
     database: ${DB_NAME}
 
 tools:
-  get_user_medicine_inventory:
+  get_medicine_inventory:
     kind: mysql-sql
     source: kin-mysql-source
     statement: |
-      SELECT 
-          m.medicine_name, 
-          m.daily_dosage, 
-          m.pills_remaining, 
-          p.contact_name AS pharmacist_name,
-          p.phone_number AS pharmacist_number
-      FROM medicine_inventory m
-      LEFT JOIN priority_contacts p ON m.pharmacist_contact_id = p.contact_id
-      WHERE m.user_id = ?;
+      CALL sp_get_medicine_inventory(?);
     description: |
-      Use this tool to get the current medicine inventory and pharmacist contact numbers for a specific user.
+      Use this tool to get the user's active medicine inventory and pharmacist contacts.
     parameters:
       - name: user_id
         type: string
-        description: The unique SSO user ID of the currently logged-in user.
+        description: The unique identifier of the user.
+
+  log_prescription:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_log_prescription(?, ?, ?, ?, ?, ?, ?, @out_id);
+      SELECT @out_id AS prescription_id;
+    description: |
+      Logs a new prescription and doctor details.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: doctor_name
+        type: string
+        description: The name of the prescribing doctor.
+      - name: clinic_name
+        type: string
+        description: The name of the clinic where the prescription was made.
+      - name: phone_number
+        type: string
+        description: The phone number of the prescribing doctor.
+      - name: timings
+        type: string
+        description: The timings for taking the medicine (e.g., "Morning, Afternoon, Evening").
+      - name: prescription_date
+        type: string
+        description: The date when the prescription was made (e.g., "2024-06-01").
+      - name: image_url
+        type: string
+        description: The URL of the uploaded prescription image.
+
+  update_medicine_stock:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_update_medicine_inventory(?, ?, ?, ?, ?);
+    description: |
+      Updates medicine stock with rollover logic when new pills are purchased or prescribed.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: medicine_name
+        type: string
+        description: The name of the medicine to update.
+      - name: daily_dosage
+        type: integer
+        description: The daily dosage of the medicine (e.g., 2 pills per day).
+      - name: new_pills
+        type: integer
+        description: The number of new pills being added to the inventory.
+      - name: prescription_id
+        type: integer
+        description: The ID of the prescription associated with this stock update.
+
+  save_medical_report:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_save_medical_report(?, ?, ?, ?, ?, ?);
+    description: |
+      Saves a master medical report and its parameters. The parameters must be a valid JSON array string.
+    parameters:
+      - name: report_id
+        type: string
+        description: The unique identifier of the medical report.
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: report_date
+        type: string
+        description: The date of the medical report (e.g., "2024-06-01").
+      - name: doctor_name
+        type: string
+        description: The name of the doctor associated with the report.
+      - name: lab_name
+        type: string
+        description: The name of the lab where tests were conducted.
+      - name: parameters_json
+        type: string
+        description: A JSON array string containing the parameters of the medical report.
+
+  compare_latest_reports:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_compare_latest_reports(?);
+    description: |
+      Compares the user's latest medical report with the previous one to find health trends.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+
+  get_priority_contacts:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_get_priority_contacts(?);
+    description: |
+      Fetches the user's priority emergency contacts and their Telegram chat ID.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+  
+  get_user_by_chat_id:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      SELECT user_id FROM users WHERE telegram_chat_id = ?;
+    description: |
+      Fetches the user ID associated with a given Telegram chat ID.
+    parameters:
+      - name: chat_id
+        type: string
+        description: The Telegram chat ID of the user.
+  create_user:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      INSERT INTO users (user_id, telegram_chat_id)
+      VALUES (?, ?);
+    description: |
+      Creates a new user in the database with the provided user ID and Telegram chat ID.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: chat_id
+        type: string
+        description: The Telegram chat ID of the user.
+  
+  complete_onboarding:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_complete_onboarding(?, ?, ?, ?, ?);
+    description: |
+      Completes the onboarding process for a user with the provided details.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: name
+        type: string
+        description: The name of the user.
+      - name: mobile_number
+        type: string
+        description: The mobile number of the user.
+      - name: email
+        type: string
+        description: The email address of the user.
+      - name: is_onboarded
+        type: boolean
+        description: A flag indicating whether the user has completed onboarding.
 toolsets:
   kin_db_toolset:
-    - get_user_medicine_inventory
-
+    - get_medicine_inventory
+    - log_prescription
+    - update_medicine_stock
+    - save_medical_report
+    - compare_latest_reports
+  contacts_toolset:
+    - get_priority_contacts
+  onboarding_toolset:
+    - get_user_by_chat_id
+    - create_user
+    - complete_onboarding
 #run toolbox using: ./toolbox --tools-file="tools.yaml"  --ui
 #Windows: 
   # Download the MCP Toolbox executable for Windows and run it with the tools.yaml configuration
@@ -38,4 +196,5 @@ toolsets:
     # Get-Content .env | Where-Object { $_ -match '^[^#]' -and $_ -match '=' } | ForEach-Object { $name, $value = $_.Split('=', 2); [Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim(' "\'''), "Process") }
   # Invoke-WebRequest -Uri "https://storage.googleapis.com/genai-toolbox/v0.23.0/windows/amd64/toolbox.exe" -OutFile "toolbox.exe"
   #.\toolbox.exe --tools-file="tools.yaml" --ui
+
 
