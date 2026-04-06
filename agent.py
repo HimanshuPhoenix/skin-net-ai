@@ -17,7 +17,7 @@ from .tools import (
 
 ##  Load environment variables
 load_dotenv()
-model_name = os.getenv("MODEL", "gemini-2.5-flash")
+model_name = os.getenv("MODEL", "gemini-1.5-flash")
 
 ##  1. Load Toolsets
 maps_toolset = tools.get_maps_mcp_toolset()
@@ -162,6 +162,22 @@ skin_net_workflow = SequentialAgent(
     ]
 )
 
+##  Combined Agent to reduce API calls and avoid 429 Quota errors
+'''
+primary_care_agent = Agent(
+    name="primary_care_agent",
+    model=model_name,
+    description="Handles all medical analysis and logistics coordination in one step.",
+    instruction="""
+    You are the primary coordinator for SKIn-Net. 
+    1. First, perform any medical tasks (Inventory, Prescriptions, Reports) using your tools.
+    2. Then, coordinate any logistics (Cabs, WhatsApp alerts, Appointments) based on those findings.
+    3. Synthesize everything into one warm, senior-friendly response.
+    """,
+    tools=db_tools + [analyze_medical_document, identify_unknown_medicine, maps_toolset, *contacts_tool, generate_uber_booking_link, schedule_calendar_event, send_telegram_alert, generate_whatsapp_link, generate_phone_call_link]
+)
+'''
+
 ##  The Main Greeter (The Router)
 root_agent = Agent(
     name="skin_net_greeter",
@@ -177,7 +193,7 @@ root_agent = Agent(
        - Use the 'create_user' tool to save their assigned User ID and Chat ID.
        - Warmly welcome them to SKIn-Net and ask for their Full Name, Email, and Mobile Number (with country code).
        - Once they provide all three details, use the 'complete_onboarding' tool (set is_onboarded to true/1).
-       - Generate an invitation to share with their family members or caregivers to become a priority contact for this user. The priority contact will send "Add Me" to the bot at t.me/skin_net_sos_bot and enter this user's User ID when prompted.
+       - Generate an invitation to share on whatapp with their family members or caregivers to become a priority contact for this user. The priority contact will send "Add Me" to the bot at t.me/skin_net_sos_bot and enter this user's User ID when prompted.
        - Give them this exact Google SSO link to connect their calendar: http://localhost:5000/auth/google?user_id={Their User ID}
 
     4. IF THE USER SAYS "SETUP" OR "ONBOARDING":

@@ -11,6 +11,7 @@ from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 import urllib.parse
 
+MODEL_NAME = os.getenv("MODEL", "gemini-3.0-flash")
 def send_telegram_alert(message: str, chat_id: str) -> str:
     """Sends an urgent health or logistics alert to a family member via Telegram."""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -90,7 +91,7 @@ def analyze_medical_document(file_path: str) -> str:
     """
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=MODEL_NAME,
             contents=[document_part, prompt],
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )
@@ -170,7 +171,7 @@ def identify_unknown_medicine(file_path: str) -> str:
     """
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=MODEL_NAME,
             contents=[image_part, prompt],
             config=types.GenerateContentConfig(response_mime_type="application/json")
         )

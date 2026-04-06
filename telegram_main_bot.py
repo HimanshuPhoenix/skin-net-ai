@@ -39,17 +39,17 @@ def download_telegram_file(file_id: str, file_name: str) -> str:
         return None
 
 def send_reply(chat_id: str, text: str):
-    """Sends the response back to the user with Telegram-compatible Markdown."""
+    """Sends the response back to the user robustly."""
     try:
-        # FIX: Gemini generates **bold**, but legacy Telegram Markdown expects *bold*.
-        # We replace the asterisks so Telegram natively renders the bold styling!
-        formatted_text = text.replace("**", "*")
-        
-        requests.post(f"{TELEGRAM_API_URL}/sendMessage", json={
-            "chat_id": chat_id, 
-            "text": formatted_text,
-            "parse_mode": "Markdown"  
-        }, timeout=10)
+        # FIX: Removed parse_mode="Markdown" so LLM-generated underscores (like in kin_8130...) 
+        # don't cause Telegram to silently reject the message.
+        requests.post(
+            f"{TELEGRAM_API_URL}/sendMessage", 
+            json={"chat_id": chat_id, "text": text},
+            # FIX: Force a fresh socket connection to prevent 10054 errors
+            headers={"Connection": "close"}, 
+            timeout=15
+        )
     except Exception as e:
         print(f"Failed to send message: {e}")
 
@@ -126,7 +126,9 @@ def poll_main_bot():
                     }
                     
                     # stream=True forces Python to constantly read the real-time data, keeping the TCP socket alive
-                    adk_response = requests.post(run_url, json=adk_payload, headers=adk_headers, stream=True, timeout=180)
+                    #adk_response = requests.post(run_url, json=adk_payload, headers=adk_headers, stream=True, timeout=180)
+                    # FIX: Increased timeout to 300 to survive temporary GCP quota backoffs
+                    adk_response = requests.post(run_url, json=adk_payload, headers=adk_headers, stream=True, timeout=300)
                     
                     if adk_response.status_code == 200:
                         reply_text = ""
