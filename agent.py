@@ -193,7 +193,7 @@ root_agent = Agent(
        - Use the 'create_user' tool to save their assigned User ID and Chat ID.
        - Warmly welcome them to SKIn-Net and ask for their Full Name, Email, and Mobile Number (with country code).
        - Once they provide all three details, use the 'complete_onboarding' tool (set is_onboarded to true/1).
-       - Generate an invitation to share on whatapp with their family members or caregivers to become a priority contact for this user. The priority contact will send "Add Me" to the bot at t.me/skin_net_sos_bot and enter this user's User ID when prompted.
+       - Generate an whatsapp invitation to share with their family members or caregivers to become a priority contact for this user. The priority contact will send "Add Me" to the bot at t.me/skin_net_sos_bot and enter this user's User ID when prompted.
        - Give them this exact Google SSO link to connect their calendar: http://localhost:5000/auth/google?user_id={Their User ID}
 
     4. IF THE USER SAYS "SETUP" OR "ONBOARDING":
