@@ -73,7 +73,7 @@ tools:
         description: The number of new pills being added to the inventory.
       - name: prescription_id
         type: integer
-        description: The ID of the prescription associated with this stock update.
+        description: (OPTIONAL) The ID of the prescription associated with this stock update. Pass -1 or omit if adding from a photo or direct text request.
 
   save_medical_report:
     kind: mysql-sql

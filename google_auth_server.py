@@ -56,7 +56,7 @@ def callback():
     # 4. Fetch OAuth token (This will now succeed!)
     flow.fetch_token(authorization_response=request.url)
     credentials = flow.credentials
-    
+    creds_json = credentials.to_json()
     # 5. Fetch the user's actual Google Email
     user_info_service = build('oauth2', 'v2', credentials=credentials)
     user_info = user_info_service.userinfo().get().execute()
@@ -73,9 +73,9 @@ def callback():
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE users 
-            SET email = %s, google_connected = 1 
+            SET email = %s, google_connected = 1, google_credentials = %s 
             WHERE user_id = %s
-        """, (user_email, user_id))
+        """, (user_email, user_id, creds_json))
         conn.commit()
         cursor.close()
         conn.close()

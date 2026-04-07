@@ -86,9 +86,27 @@ CREATE TABLE `users` (
  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
  `is_onboarded` tinyint(1) NOT NULL DEFAULT '0',
  `google_connected` tinyint(1) DEFAULT '0',
+ `google_credentials` JSON DEFAULT NULL;
  PRIMARY KEY (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
 
+CREATE TABLE medicine_schedules (
+    schedule_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(255),
+    medicine_name VARCHAR(255),
+    dosage VARCHAR(50),
+    reminder_time TIME, -- e.g., '09:00:00'
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+);
+
+CREATE TABLE daily_medication_logs (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    schedule_id INT,
+    user_id VARCHAR(255),
+    expected_time DATETIME,
+    status ENUM('PENDING', 'TAKEN', 'ESCALATED') DEFAULT 'PENDING',
+    FOREIGN KEY (schedule_id) REFERENCES medicine_schedules(schedule_id)
+);
 -- Stored Procedures:
 
 DELIMITER //
@@ -172,6 +190,9 @@ BEGIN
     END IF;
 
     -- Step 4: Insert the newly combined active inventory record
+    IF p_prescription_id = -1 THEN
+        SET p_prescription_id = NULL;
+    END IF;
     INSERT INTO medicine_inventory (user_id, medicine_name, daily_dosage, pills_remaining, prescription_id)
     VALUES (p_user_id, p_medicine_name, p_daily_dosage, v_total_pills, p_prescription_id);
 
