@@ -350,3 +350,42 @@ BEGIN
 END //
 
 DELIMITER ;
+
+DELIMITER //
+
+-- Procedure to add a daily medicine schedule for the background cron job to read
+CREATE PROCEDURE sp_add_medicine_schedule(
+    IN p_user_id VARCHAR(255),
+    IN p_medicine_name VARCHAR(255),
+    IN p_dosage VARCHAR(50),
+    IN p_reminder_time TIME
+)
+BEGIN
+    INSERT INTO medicine_schedules (user_id, medicine_name, dosage, reminder_time)
+    VALUES (p_user_id, p_medicine_name, p_dosage, p_reminder_time);
+END //
+
+-- Procedure to confirm intake and deduct stock
+CREATE PROCEDURE sp_confirm_medicine_intake(
+    IN p_user_id VARCHAR(255),
+    IN p_medicine_name VARCHAR(255)
+)
+BEGIN
+    -- 1. Mark the most recent pending log as taken for today
+    UPDATE daily_medication_logs l
+    JOIN medicine_schedules s ON l.schedule_id = s.schedule_id
+    SET l.status = 'TAKEN'
+    WHERE l.user_id = p_user_id 
+      AND s.medicine_name = p_medicine_name 
+      AND l.status = 'PENDING' 
+      AND DATE(l.expected_time) = CURDATE()
+    ORDER BY l.expected_time DESC
+    LIMIT 1;
+
+    -- 2. Deduct 1 pill from active inventory
+    UPDATE medicine_inventory
+    SET pills_remaining = pills_remaining - 1
+    WHERE user_id = p_user_id AND medicine_name = p_medicine_name AND pills_remaining > 0;
+END //
+
+DELIMITER ;

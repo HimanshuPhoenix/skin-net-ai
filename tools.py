@@ -11,6 +11,8 @@ from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 import urllib.parse
 
+from toolbox_core import ToolboxSyncClient 
+mcp_client = ToolboxSyncClient("http://127.0.0.1:5000")
 MODEL_NAME = os.getenv("MODEL", "gemini-3.0-flash")
 def send_telegram_alert(message: str, chat_id: str) -> str:
     """Sends an urgent health or logistics alert to a family member via Telegram."""
@@ -178,3 +180,65 @@ def identify_unknown_medicine(file_path: str) -> str:
         return response.text
     except Exception as e:
         return f"TOOL_ERROR: AI Analysis failed. Details: {str(e)}"
+
+def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str, end_time_iso: str, description: str) -> str:
+    """Schedules an event on the user's connected Google Calendar via REST API."""
+    try:
+        # 1. Fetch Google Credentials from DB via the MCP Toolkit
+        # This replaces mysql.connector and uses your toolkit's execution method
+        # (Adjust 'execute_tool' below if your ToolboxSyncClient uses a different method name like 'call_tool')
+        try:
+            db_response = mcp_client.execute_tool(
+                "get_google_credentials", 
+                {"user_id": user_id}
+            )
+        except Exception as mcp_err:
+            # Fallback direct REST call if the sync client method name differs
+            mcp_response = requests.post(
+                "http://127.0.0.1:5000/tools/get_google_credentials/execute", 
+                json={"user_id": user_id},
+                timeout=10
+            )
+            db_response = mcp_response.json()
+
+        # Parse the JSON string from the database record
+        # (Adjust index/keys based on how your specific MCP server formats SQL return rows)
+        if isinstance(db_response, list) and len(db_response) > 0:
+            credentials_string = db_response[0].get("google_credentials")
+        elif isinstance(db_response, dict):
+            # If wrapped in a result object
+            credentials_string = db_response.get("result", [{}])[0].get("google_credentials")
+        else:
+            credentials_string = None
+
+        if not credentials_string:
+            return "Error: The user has not connected their Google Calendar. Please ask them to click the Google SSO link to connect."
+            
+        creds = json.loads(credentials_string)
+        access_token = creds.get("token")
+        
+        # 2. Make Request to Google Calendar API
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        event_data = {
+            "summary": event_title,
+            "description": description,
+            "start": {"dateTime": start_time_iso, "timeZone": "Asia/Kolkata"},
+            "end": {"dateTime": end_time_iso, "timeZone": "Asia/Kolkata"}
+        }
+        
+        response = requests.post(
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+            headers=headers,
+            json=event_data
+        )
+        
+        if response.status_code == 200:
+            return f"Successfully scheduled '{event_title}' on Google Calendar."
+        else:
+            return f"Google Calendar API Error: {response.text}"
+            
+    except Exception as e:
+        return f"Failed to schedule event due to a system error: {str(e)}"

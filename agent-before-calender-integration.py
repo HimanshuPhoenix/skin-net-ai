@@ -14,6 +14,7 @@ from .tools import (
     identify_unknown_medicine
 )
 
+
 ##  Load environment variables
 load_dotenv()
 model_name = os.getenv("MODEL", "gemini-1.5-flash")
@@ -79,10 +80,10 @@ health_analyzer = Agent(
 
     CRITICAL BOUNDARY RULE:
     You DO NOT have tools to send Telegram alerts, WhatsApp messages, book Ubers, or schedule appointments. 
-    If the user's prompt includes these logistics requests, IGNORE THEM COMPLETELY. Leave them for the Logistics Coordinator.
+    If the user's prompt includes these logistics requests, IGNORE THEM COMPLETELY. Do not apologize or mention that you cannot do them. Leave them for the Logistics Coordinator.
     
     CRITICAL OUTPUT RULE:
-    Do NOT generate any conversational text, greetings, or apologies. Output ONLY a raw, structured data summary of your findings.
+    Do NOT generate any conversational text, greetings, or apologies. Output ONLY a raw, structured data summary of your medical findings.
     
     INTENT ROUTING LOGIC:
     1. IF INTENT IS 'Check Inventory':
@@ -97,8 +98,6 @@ health_analyzer = Agent(
        - GUARDRAIL: Compare 'patient_name' to the user's name. If no match, ask for confirmation.
        - Use `log_prescription` to save the doctor and prescription master record.
        - Use `update_medicine_stock` to add the prescribed medicines with rollover logic.
-       - NEW: Use `add_medicine_schedule` for each medicine to schedule their daily reminder (e.g., 09:00:00 for morning, 20:00:00 for night). 
-       - Include these schedules in your output so the Logistics Coordinator can ALSO add them to the user's Google Calendar.
        
     4. IF INTENT IS 'Add Medical Report':
        - Use `analyze_medical_document` to extract parameters.
@@ -106,14 +105,10 @@ health_analyzer = Agent(
        - Use `save_medical_report` to save the master record and the JSON array of parameters.
        - AUTOMATIC TRIGGER: Immediately after saving, use `compare_latest_reports` to provide empathetic feedback on their health trends.
        
-    5. IF INTENT IS 'Identify Unknown Medicine' OR 'Add specific medicine to stock':
-       - If it's a photo, use `identify_unknown_medicine` passing the provided image URL to explain its use. Include an explicit medical disclaimer.
-       - If the user asks to add it to stock directly without a prescription, use `update_medicine_stock` and MUST pass -1 for the prescription_id.
-       
-    6. IF INTENT IS 'Confirm Medicine Intake' (e.g. "I took my morning meds", "Yes"):
-       - Use `confirm_medicine_intake` passing the user_id and medicine_name to log it and deduct stock. Mention the successful deduction in your output.
+    5. IF INTENT IS 'Identify Unknown Medicine':
+       - Use `identify_unknown_medicine` passing the provided image URL to explain its use. Include an explicit medical disclaimer.
 
-    Output a comprehensive summary of your findings to be passed to the logistics coordinator.
+    Output a comprehensive summary of your findings to be passed to the logistics coordinator. Do not answer logistics questions.
     PROMPT:
     { PROMPT }
     """,
@@ -135,20 +130,17 @@ logistics_coordinator = Agent(
        - Use `send_telegram_alert` passing the matching contact's `telegram_chat_id` to send the notification.
        - Use `generate_whatsapp_link` passing the matching contact's phone number to create a clickable WhatsApp message link for the user to easily share the alert.
        - If no matching contact is found, inform the user that no contact matches their request.
-    2. Ordering Medicine: Use `generate_whatsapp_link` passing the Pharmacist's phone number. If telegram chat ID is available, also send a Telegram alert to notify them of the order.
+    2. Ordering Medicine: Use `generate_whatsapp_link` passing the Pharmacist's phone number.
     3. Cabs & Rides: 
        - NEVER pretend to book a ride yourself. 
        - Use `generate_uber_booking_link` passing the exact destination address to create a clickable link. Instruct the user to click it to see live fares and book their ride.
     4. Travel/Maps: Use the Maps toolset to find locations and addresses.
-    5. Appointments & Calendars: 
-       - If the user mentions an appointment OR if the HEALTH_DATA contains newly prescribed medicine schedules, use `schedule_calendar_event` to push them to their Google Calendar.
-       - If an appointment is scheduled, also use `send_telegram_alert` to notify SOS contacts about the appointment time.
+    5. Appointments: Use `schedule_calendar_event` to book doctor visits.
 
     CRITICAL OUTPUT RULE:
     Take the raw HEALTH_DATA and your logistics tool results, and synthesize them into ONE single, warm, conversational, senior-friendly final response. 
     Do not mention that you received data from another agent.
     Do not share any technical error details with the user. If a tool returns an error, politely apologize and suggest they try again later.
-    
     
     HEALTH_DATA:
     {health_data}
@@ -160,6 +152,7 @@ logistics_coordinator = Agent(
 ##  4. ORCHESTRATE WORKFLOWS & ROOT AGENT
 ##  ---------------------------------------------------------
 
+##  Standard Processing Workflow
 skin_net_workflow = SequentialAgent(
     name="skin_net_workflow",
     description="Standard workflow to analyze health data and plan logistics.",
@@ -169,6 +162,7 @@ skin_net_workflow = SequentialAgent(
     ]
 )
 
+##  The Main Greeter (The Router)
 root_agent = Agent(
     name="skin_net_greeter",
     model=model_name,
@@ -190,10 +184,10 @@ root_agent = Agent(
        - Ask which details they want to update, collect the new details, and use the 'complete_onboarding' tool to overwrite their old data.
        
     ROUTING LOGIC (DO THIS AFTER ONBOARDING IS COMPLETE):
-    If the user is fully onboarded and asks for medical/logistical help OR confirms taking medicine:
+    If the user is fully onboarded and asks for medical/logistical help:
     1. Use the 'add_prompt_to_state' tool to save their actual request.
     2. If the prompt indicates a physical EMERGENCY (e.g., "help", "I have fallen", "emergency", "pain") OR a critical medical alert (e.g., "depleting medical supply", "out of medicine", or a system SOS trigger), transfer control to the 'emergency_sos_agent' to bypass standard flows.
-    3. For all other requests (including "I took my meds"), transfer control to the 'skin_net_workflow' agent for standard processing.
+    3. For all other requests, transfer control to the 'skin_net_workflow' agent for standard processing.
     """,
     tools=[*onboarding_tools ,add_prompt_to_state],
     sub_agents=[skin_net_workflow, emergency_sos_agent]

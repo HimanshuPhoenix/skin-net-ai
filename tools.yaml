@@ -137,6 +137,7 @@ tools:
       - name: chat_id
         type: string
         description: The Telegram chat ID of the user.
+
   create_user:
     kind: mysql-sql
     source: kin-mysql-source
@@ -176,6 +177,55 @@ tools:
       - name: is_onboarded
         type: boolean
         description: A flag indicating whether the user has completed onboarding.
+
+  add_medicine_schedule:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_add_medicine_schedule(?, ?, ?, ?);
+    description: |
+      Adds a daily reminder schedule for a medicine (e.g., morning, night).
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: medicine_name
+        type: string
+        description: The name of the medicine for which to set the reminder.
+      - name: dosage
+        type: string
+        description: The dosage information for the reminder (e.g., "2 pills").
+      - name: reminder_time
+        type: string
+        description: Standard time format (e.g., "09:00:00" for 9 AM, "20:00:00" for 8 PM).
+
+  confirm_medicine_intake:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      CALL sp_confirm_medicine_intake(?, ?);
+    description: |
+      Marks a medication reminder as taken and deducts 1 pill from inventory.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+      - name: medicine_name
+        type: string
+        description: The name of the medicine for which to confirm intake.
+
+  get_google_credentials:
+    kind: mysql-sql
+    source: kin-mysql-source
+    statement: |
+      SELECT google_credentials FROM users WHERE user_id = ?;
+    description: |
+      Fetches the saved Google OAuth credentials for a specific user.
+    parameters:
+      - name: user_id
+        type: string
+        description: The unique identifier of the user.
+
 toolsets:
   kin_db_toolset:
     - get_medicine_inventory
@@ -183,6 +233,9 @@ toolsets:
     - update_medicine_stock
     - save_medical_report
     - compare_latest_reports
+    - add_medicine_schedule
+    - confirm_medicine_intake
+    - get_google_credentials
   contacts_toolset:
     - get_priority_contacts
   onboarding_toolset:
