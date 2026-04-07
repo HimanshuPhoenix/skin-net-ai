@@ -114,11 +114,6 @@ def generate_uber_booking_link(destination_address: str) -> str:
     return f"https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[formatted_address]={encoded_destination}"
 
 
-def schedule_calendar_event(date_time: str, description: str) -> str:
-    """Prototype tool to schedule an event on the user's calendar."""
-    logging.info(f"Scheduling calendar event: {description} at {date_time}")
-    return f"Successfully scheduled '{description}' for {date_time} in the calendar."
-
 def generate_whatsapp_link(phone_number: str, message: str) -> str:
     """
     Generates a clickable WhatsApp link to send a prescription or order to a pharmacist.

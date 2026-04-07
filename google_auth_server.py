@@ -75,7 +75,7 @@ def callback():
             UPDATE users 
             SET email = %s, google_connected = 1, google_credentials = %s 
             WHERE user_id = %s
-        """, (user_email, user_id, creds_json))
+        """, (user_email, creds_json, user_id))
         conn.commit()
         cursor.close()
         conn.close()

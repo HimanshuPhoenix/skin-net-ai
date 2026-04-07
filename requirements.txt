@@ -6,3 +6,4 @@ toolbox-core
 arxiv
 google_auth_oauthlib
 flask
+apscheduler

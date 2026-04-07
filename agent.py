@@ -82,7 +82,7 @@ health_analyzer = Agent(
     If the user's prompt includes these logistics requests, IGNORE THEM COMPLETELY. Leave them for the Logistics Coordinator.
     
     CRITICAL OUTPUT RULE:
-    Do NOT generate any conversational text, greetings, or apologies. Output ONLY a raw, structured data summary of your findings.
+    Do NOT generate any conversational text, greetings, or apologies. Provide a hidden internal summary for the next agent. Do not address the user.
     
     INTENT ROUTING LOGIC:
     1. IF INTENT IS 'Check Inventory':
