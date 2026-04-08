@@ -85,7 +85,7 @@ def poll_main_bot():
 
                 print(f"Processing Request for {chat_id}...")
 
-                uid = f"kin_{chat_id}"
+                uid = f"SK{chat_id}"
                 contextual_prompt = f"[SYSTEM CONTEXT: The user's Telegram Chat ID is {chat_id} and their assigned User ID is {uid}.] \n\nUser says: {prompt_text}"
                 
                 # FIX 3: Handle both Images and Documents
