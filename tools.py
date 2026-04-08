@@ -12,6 +12,8 @@ from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnecti
 import urllib.parse
 import datetime
 import traceback
+import google.oauth2.credentials
+import google.auth.transport.requests
 
 from toolbox_core import ToolboxSyncClient 
 mcp_client = ToolboxSyncClient("http://127.0.0.1:5000")
@@ -178,60 +180,80 @@ def identify_unknown_medicine(file_path: str) -> str:
     except Exception as e:
         return f"TOOL_ERROR: AI Analysis failed. Details: {str(e)}"
 
-import datetime
-import traceback
 
-def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str, end_time_iso: str = None, description: str = "") -> str:
+def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str, end_time_iso: str = " ", description: str = "") -> str:
     """Schedules an event on the user's connected Google Calendar via REST API."""
     try:
-        # 1. Handle missing end_time_iso (LLMs frequently omit this)
-        if not end_time_iso:
+        # 1. BULLETPROOF DATETIME MATH: Handle missing or malformed end_time from the LLM
+        if not end_time_iso or "T" not in end_time_iso:
             try:
+                # Force strictly correct ISO parsing and add 1 hour automatically
                 start_dt = datetime.datetime.fromisoformat(start_time_iso.replace('Z', '+00:00'))
                 end_time_iso = (start_dt + datetime.timedelta(hours=1)).isoformat()
             except ValueError:
                 return f"Error: start_time_iso '{start_time_iso}' is not a valid ISO format."
 
-        # 2. Safely Fetch Google Credentials
+        # 2. STRICT MCP FETCH: Get Google Credentials
         credentials_string = None
         try:
-            # Attempt standard MCP Toolkit Call
-            db_response = mcp_client.call_tool("get_google_credentials", {"user_id": user_id})
-            content = db_response.get("content", [])
-            if content and isinstance(content[0], dict):
-                parsed_text = json.loads(content[0].get("text", "[]"))
-                credentials_string = parsed_text[0].get("google_credentials")
+            # Step A: Load the tool from the MCP server as a Python callable
+            get_creds_tool = mcp_client.load_tool("get_google_credentials")
+            
+            # Step B: Execute the callable directly
+            db_response = get_creds_tool(user_id=user_id)
+            
+            print(f"Raw MCP Response: {db_response}") # Helpful for debugging!
+            
+            # Step C: Parse the response
+            # SQL tools typically return a JSON string or a direct Python list
+            if isinstance(db_response, str):
+                parsed_response = json.loads(db_response)
+            else:
+                parsed_response = db_response
+                
+            if isinstance(parsed_response, list) and len(parsed_response) > 0:
+                credentials_string = parsed_response[0].get("google_credentials")
+            elif isinstance(parsed_response, dict):
+                # Handle nested dict structures if the toolbox wraps the result
+                if "google_credentials" in parsed_response:
+                    credentials_string = parsed_response.get("google_credentials")
+                elif "result" in parsed_response and isinstance(parsed_response["result"], list):
+                    credentials_string = parsed_response["result"][0].get("google_credentials")
+                             
         except Exception as mcp_err:
-            print(f"MCP Parse Alert: {mcp_err}. Using secure direct fallback.")
-        
-        # SAFE FALLBACK: Clean, immediately-closing connection (Zero risk of connection drops)
-        if not credentials_string:
-            import mysql.connector
-            conn = mysql.connector.connect(
-                host=os.getenv("DB_HOST", "localhost"),
-                user=os.getenv("DB_USER", "root"),
-                password=os.getenv("DB_PASSWORD", ""),
-                database=os.getenv("DB_NAME", "skin_net")
-            )
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT google_credentials FROM users WHERE user_id = %s", (user_id,))
-            user_row = cursor.fetchone()
-            if user_row:
-                credentials_string = user_row.get('google_credentials')
-            cursor.close()
-            conn.close()
+            print(f"MCP Fetch Error: {mcp_err}")
+            return f"Database Error: Failed to retrieve credentials via MCP Toolkit. Details: {mcp_err}"
 
         if not credentials_string:
-            error_msg = "Error: The user has not connected their Google Calendar. Please ask them to click the Google SSO link to connect."
-            print(f"CALENDAR TOOL ERROR: {error_msg}")
-            return error_msg
+            return "Error: The user has not connected their Google Calendar. Please ask them to click the Google SSO link to connect."
             
-        creds = json.loads(credentials_string)
-        access_token = creds.get("token")
+        # Safely handle the credentials whether MCP returns a string or a pre-parsed dictionary
+        if isinstance(credentials_string, dict):
+            creds_dict = credentials_string
+        else:
+            creds_dict = json.loads(credentials_string)
+            
+        # Reconstruct the Google Credentials object
+        credentials = google.oauth2.credentials.Credentials(
+            token=creds_dict.get("token"),
+            refresh_token=creds_dict.get("refresh_token"),
+            token_uri=creds_dict.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id=creds_dict.get("client_id"),
+            client_secret=creds_dict.get("client_secret")
+        )
+
+        # FORCE REFRESH: Guarantee a 100% fresh token directly before calling the API
+        if credentials.refresh_token:
+            print("Refreshing token automatically to bypass 401 error...")
+            credentials.refresh(google.auth.transport.requests.Request())
+            
+        # STRIP UTC MARKERS: Google Calendar rejects 'Z' if timeZone is specified
+        start_time_iso = start_time_iso.replace("Z", "")
+        end_time_iso = end_time_iso.replace("Z", "")
         
-        # 3. Make Request to Google Calendar API
+        # 3. Make Request to Google Calendar API using the guaranteed fresh token
         headers = {
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {credentials.token}",
             "Content-Type": "application/json"
         }
         event_data = {
@@ -241,7 +263,7 @@ def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str,
             "end": {"dateTime": end_time_iso, "timeZone": "Asia/Kolkata"}
         }
         
-        print(f"Sending Calendar Request: {event_data}") # Debug log to see LLM inputs
+        print(f"\n--- CALENDAR DEBUG --- \nSending Payload: {event_data}\n----------------------\n") 
         
         response = requests.post(
             "https://www.googleapis.com/calendar/v3/calendars/primary/events",
@@ -253,11 +275,9 @@ def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str,
             print(f"CALENDAR SUCCESS: Scheduled {event_title}")
             return f"Successfully scheduled '{event_title}' on Google Calendar."
         else:
-            error_msg = f"Google Calendar API Error: {response.text}"
-            print(f"CALENDAR TOOL ERROR: {error_msg}")
-            return error_msg
+            print(f"GOOGLE API ERROR: {response.text}")
+            return f"Google Calendar API Error: {response.text}"
             
     except Exception as e:
-        error_msg = f"Failed to schedule event due to a system error: {str(e)}"
-        print(f"CALENDAR EXCEPTION:\n{traceback.format_exc()}")
-        return error_msg
+        print(f"CRITICAL CALENDAR EXCEPTION:\n{traceback.format_exc()}")
+        return f"Failed to schedule event due to a system error: {str(e)}"
