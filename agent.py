@@ -141,7 +141,7 @@ logistics_coordinator = Agent(
        - Use `generate_uber_booking_link` passing the exact destination address to create a clickable link. Instruct the user to click it to see live fares and book their ride.
     4. Travel/Maps: Use the Maps toolset to find locations and addresses.
     5. Appointments & Calendars: 
-       - If the user mentions an appointment OR if the HEALTH_DATA contains newly prescribed medicine schedules, use `schedule_calendar_event` to push them to their Google Calendar.
+       - If the user mentions an appointment OR if the HEALTH_DATA contains newly prescribed medicine schedules, use `schedule_calendar_event` to push them to their Google Calendar, if end time is not specified, calculate it as one hour after the start time.
        - If an appointment is scheduled, also use `send_telegram_alert` to notify SOS contacts about the appointment time.
 
     CRITICAL OUTPUT RULE:

@@ -10,6 +10,8 @@ from google.genai import types
 from google.adk.tools.mcp_tool.mcp_toolset import MCPToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPConnectionParams
 import urllib.parse
+import datetime
+import traceback
 
 from toolbox_core import ToolboxSyncClient 
 mcp_client = ToolboxSyncClient("http://127.0.0.1:5000")
@@ -176,43 +178,58 @@ def identify_unknown_medicine(file_path: str) -> str:
     except Exception as e:
         return f"TOOL_ERROR: AI Analysis failed. Details: {str(e)}"
 
-def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str, end_time_iso: str, description: str) -> str:
+import datetime
+import traceback
+
+def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str, end_time_iso: str = None, description: str = "") -> str:
     """Schedules an event on the user's connected Google Calendar via REST API."""
     try:
-        # 1. Fetch Google Credentials from DB via the MCP Toolkit
-        # This replaces mysql.connector and uses your toolkit's execution method
-        # (Adjust 'execute_tool' below if your ToolboxSyncClient uses a different method name like 'call_tool')
-        try:
-            db_response = mcp_client.execute_tool(
-                "get_google_credentials", 
-                {"user_id": user_id}
-            )
-        except Exception as mcp_err:
-            # Fallback direct REST call if the sync client method name differs
-            mcp_response = requests.post(
-                "http://127.0.0.1:5000/tools/get_google_credentials/execute", 
-                json={"user_id": user_id},
-                timeout=10
-            )
-            db_response = mcp_response.json()
+        # 1. Handle missing end_time_iso (LLMs frequently omit this)
+        if not end_time_iso:
+            try:
+                start_dt = datetime.datetime.fromisoformat(start_time_iso.replace('Z', '+00:00'))
+                end_time_iso = (start_dt + datetime.timedelta(hours=1)).isoformat()
+            except ValueError:
+                return f"Error: start_time_iso '{start_time_iso}' is not a valid ISO format."
 
-        # Parse the JSON string from the database record
-        # (Adjust index/keys based on how your specific MCP server formats SQL return rows)
-        if isinstance(db_response, list) and len(db_response) > 0:
-            credentials_string = db_response[0].get("google_credentials")
-        elif isinstance(db_response, dict):
-            # If wrapped in a result object
-            credentials_string = db_response.get("result", [{}])[0].get("google_credentials")
-        else:
-            credentials_string = None
+        # 2. Safely Fetch Google Credentials
+        credentials_string = None
+        try:
+            # Attempt standard MCP Toolkit Call
+            db_response = mcp_client.call_tool("get_google_credentials", {"user_id": user_id})
+            content = db_response.get("content", [])
+            if content and isinstance(content[0], dict):
+                parsed_text = json.loads(content[0].get("text", "[]"))
+                credentials_string = parsed_text[0].get("google_credentials")
+        except Exception as mcp_err:
+            print(f"MCP Parse Alert: {mcp_err}. Using secure direct fallback.")
+        
+        # SAFE FALLBACK: Clean, immediately-closing connection (Zero risk of connection drops)
+        if not credentials_string:
+            import mysql.connector
+            conn = mysql.connector.connect(
+                host=os.getenv("DB_HOST", "localhost"),
+                user=os.getenv("DB_USER", "root"),
+                password=os.getenv("DB_PASSWORD", ""),
+                database=os.getenv("DB_NAME", "skin_net")
+            )
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT google_credentials FROM users WHERE user_id = %s", (user_id,))
+            user_row = cursor.fetchone()
+            if user_row:
+                credentials_string = user_row.get('google_credentials')
+            cursor.close()
+            conn.close()
 
         if not credentials_string:
-            return "Error: The user has not connected their Google Calendar. Please ask them to click the Google SSO link to connect."
+            error_msg = "Error: The user has not connected their Google Calendar. Please ask them to click the Google SSO link to connect."
+            print(f"CALENDAR TOOL ERROR: {error_msg}")
+            return error_msg
             
         creds = json.loads(credentials_string)
         access_token = creds.get("token")
         
-        # 2. Make Request to Google Calendar API
+        # 3. Make Request to Google Calendar API
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
@@ -224,6 +241,8 @@ def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str,
             "end": {"dateTime": end_time_iso, "timeZone": "Asia/Kolkata"}
         }
         
+        print(f"Sending Calendar Request: {event_data}") # Debug log to see LLM inputs
+        
         response = requests.post(
             "https://www.googleapis.com/calendar/v3/calendars/primary/events",
             headers=headers,
@@ -231,9 +250,14 @@ def schedule_calendar_event(user_id: str, event_title: str, start_time_iso: str,
         )
         
         if response.status_code == 200:
+            print(f"CALENDAR SUCCESS: Scheduled {event_title}")
             return f"Successfully scheduled '{event_title}' on Google Calendar."
         else:
-            return f"Google Calendar API Error: {response.text}"
+            error_msg = f"Google Calendar API Error: {response.text}"
+            print(f"CALENDAR TOOL ERROR: {error_msg}")
+            return error_msg
             
     except Exception as e:
-        return f"Failed to schedule event due to a system error: {str(e)}"
+        error_msg = f"Failed to schedule event due to a system error: {str(e)}"
+        print(f"CALENDAR EXCEPTION:\n{traceback.format_exc()}")
+        return error_msg
